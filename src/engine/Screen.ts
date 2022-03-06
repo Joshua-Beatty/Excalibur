@@ -1,4 +1,4 @@
-import { Vector, vec } from './Math/vector';
+import { vec, Vector } from './Math/vector';
 import { Logger } from './Util/Log';
 import { Camera } from './Camera';
 import { BrowserEvents } from './Util/Browser';
@@ -15,6 +15,11 @@ export enum DisplayMode {
    * Default, use a specified resolution for the game. Like 800x600 pixels for example.
    */
   Fixed = 'Fixed',
+
+  /**
+   * Fit an aspect ratio within the screen at all times will fill the screen.
+   */
+  FitContent = 'FitContent',
 
   /**
    * Fit to screen using as much space as possible while maintaining aspect ratio and resolution.
@@ -40,7 +45,6 @@ export enum DisplayMode {
    *   width: 100%;
    * }
    * ```
-   *
    */
   FitScreen = 'FitScreen',
 
@@ -64,7 +68,7 @@ export enum DisplayMode {
    * Allow the game to be positioned with the [[EngineOptions.position]] option
    * @deprecated Use CSS to position the game canvas, will be removed in v0.26.0
    */
-  Position = 'Position'
+  Position = 'Position',
 }
 
 /**
@@ -190,6 +194,7 @@ export class Screen {
   private _browser: BrowserEvents;
   private _camera: Camera;
   private _resolution: ScreenDimension;
+  private _contentResolution: ScreenDimension;
   private _resolutionStack: ScreenDimension[] = [];
   private _viewport: ScreenDimension;
   private _viewportStack: ScreenDimension[] = [];
@@ -205,6 +210,7 @@ export class Screen {
   constructor(options: ScreenOptions) {
     this.viewport = options.viewport;
     this.resolution = options.resolution ?? { ...this.viewport };
+    this._contentResolution = options.resolution ?? { ...this.viewport };
     this._displayMode = options.displayMode ?? DisplayMode.Fixed;
     this._canvas = options.canvas;
     this.graphicsContext = options.context;
@@ -217,7 +223,10 @@ export class Screen {
 
     this._listenForPixelRatio();
 
-    this._canvas.addEventListener('fullscreenchange', this._fullscreenChangeHandler);
+    this._canvas.addEventListener(
+      'fullscreenchange',
+      this._fullscreenChangeHandler,
+    );
     this.applyResolutionAndViewport();
   }
 
@@ -226,11 +235,17 @@ export class Screen {
       // Safari <=13.1 workaround, remove any existing handlers
       this._mediaQueryList.removeListener(this._pixelRatioChangeHandler);
     }
-    this._mediaQueryList = this._browser.window.nativeComponent.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    this._mediaQueryList = this._browser.window.nativeComponent.matchMedia(
+      `(resolution: ${window.devicePixelRatio}dppx)`,
+    );
 
     // Safari <=13.1 workaround
     if (this._mediaQueryList.addEventListener) {
-      this._mediaQueryList.addEventListener('change', this._pixelRatioChangeHandler, { once: true });
+      this._mediaQueryList.addEventListener(
+        'change',
+        this._pixelRatioChangeHandler,
+        { once: true },
+      );
     } else {
       this._mediaQueryList.addListener(this._pixelRatioChangeHandler);
     }
@@ -247,11 +262,17 @@ export class Screen {
       this.parent.removeEventListener('resize', this._resizeHandler);
       // Safari <=13.1 workaround
       if (this._mediaQueryList.removeEventListener) {
-        this._mediaQueryList.removeEventListener('change', this._pixelRatioChangeHandler);
+        this._mediaQueryList.removeEventListener(
+          'change',
+          this._pixelRatioChangeHandler,
+        );
       } else {
         this._mediaQueryList.removeListener(this._pixelRatioChangeHandler);
       }
-      this._canvas.removeEventListener('fullscreenchange', this._fullscreenChangeHandler);
+      this._canvas.removeEventListener(
+        'fullscreenchange',
+        this._fullscreenChangeHandler,
+      );
     }
   }
 
@@ -308,10 +329,11 @@ export class Screen {
   }
 
   public get parent(): HTMLElement | Window {
-    return <HTMLElement | Window>(
-      (this.displayMode === DisplayMode.FillContainer || this.displayMode === DisplayMode.FitContainer
+    return <HTMLElement | Window> (
+      this.displayMode === DisplayMode.FillContainer ||
+        this.displayMode === DisplayMode.FitContainer
         ? this.canvas.parentElement || document.body
-        : window)
+        : window
     );
   }
 
@@ -385,9 +407,10 @@ export class Screen {
         this._alreadyWarned = true; // warn once
         this._logger.warn(
           `The currently configured resolution (${this.resolution.width}x${this.resolution.height})` +
-          ' is too large for the platform WebGL implementation, this may work but cause WebGL rendering to behave oddly.' +
-          ' Try reducing the resolution or disabling Hi DPI scaling to avoid this' +
-          ' (read more here https://excaliburjs.com/docs/screens#understanding-viewport--resolution).');
+            ' is too large for the platform WebGL implementation, this may work but cause WebGL rendering to behave oddly.' +
+            ' Try reducing the resolution or disabling Hi DPI scaling to avoid this' +
+            ' (read more here https://excaliburjs.com/docs/screens#understanding-viewport--resolution).',
+        );
       }
     }
 
@@ -529,7 +552,9 @@ export class Screen {
     if (this._camera) {
       return this._camera.inverse.multiply(point);
     }
-    return point.sub(vec(this.resolution.width / 2, this.resolution.height / 2));
+    return point.sub(
+      vec(this.resolution.width / 2, this.resolution.height / 2),
+    );
   }
 
   /**
@@ -542,7 +567,9 @@ export class Screen {
     if (this._camera) {
       return this._camera.transform.multiply(point);
     }
-    return point.add(vec(this.resolution.width / 2, this.resolution.height / 2));
+    return point.add(
+      vec(this.resolution.width / 2, this.resolution.height / 2),
+    );
   }
 
   public pageToWorldCoordinates(point: Vector): Vector {
@@ -659,6 +686,28 @@ export class Screen {
       height: adjustedHeight
     };
   }
+  private _computeFitContent() {
+    document.body.style.margin = '0px';
+    document.body.style.overflow = 'hidden';
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    this.viewport = {
+      width: vw,
+      height: vh
+    };
+
+    if (vw / vh <= this._contentResolution.width / this._contentResolution.height) {
+      this.resolution = {
+        width:  vw * this._contentResolution.width / vw,
+        height: vw * this._contentResolution.width / vw * vh / vw
+      };
+    } else {
+      this.resolution = {
+        width: vh *  this._contentResolution.height / vh * vw / vh,
+        height: vh *  this._contentResolution.height / vh
+      };
+    }
+  }
 
   private _computeFitContainer() {
     const aspect = this.aspectRatio;
@@ -704,8 +753,8 @@ export class Screen {
   private _setResolutionAndViewportByDisplayMode(parent: HTMLElement | Window) {
     if (this.displayMode === DisplayMode.FillContainer) {
       this.resolution = {
-        width: (<HTMLElement>parent).clientWidth,
-        height: (<HTMLElement>parent).clientHeight
+        width: (<HTMLElement> parent).clientWidth,
+        height: (<HTMLElement> parent).clientHeight
       };
 
       this.viewport = this.resolution;
@@ -715,8 +764,8 @@ export class Screen {
       document.body.style.margin = '0px';
       document.body.style.overflow = 'hidden';
       this.resolution = {
-        width: (<Window>parent).innerWidth,
-        height: (<Window>parent).innerHeight
+        width: (<Window> parent).innerWidth,
+        height: (<Window> parent).innerHeight
       };
 
       this.viewport = this.resolution;
@@ -729,11 +778,17 @@ export class Screen {
     if (this.displayMode === DisplayMode.FitContainer) {
       this._computeFitContainer();
     }
+
+    if (this.displayMode === DisplayMode.FitContent) {
+      this._computeFitContent();
+    }
   }
 
   private _initializeDisplayModePosition(position: CanvasPosition) {
     if (!position) {
-      throw new Error('DisplayMode of Position was selected but no position option was given');
+      throw new Error(
+        'DisplayMode of Position was selected but no position option was given',
+      );
     } else {
       this.canvas.style.display = 'block';
       this.canvas.style.position = 'absolute';
